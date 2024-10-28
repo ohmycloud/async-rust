@@ -1,0 +1,3 @@
+[workspace]
+members = ["ch01-introduction-to-async"]
+resolver = "2"
