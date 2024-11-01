@@ -5,6 +5,7 @@ use std::{
 use tokio::time::sleep;
 
 async fn prep_coffee_mug() {
+    sleep(Duration::from_millis(100)).await;
     println!("开始倒牛奶...");
     thread::sleep(Duration::from_secs(3));
     println!("牛奶倒好了.");
