@@ -1,0 +1,14 @@
+[package]
+name = "ch03-building-our-own-async-queues"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# This crate is essential for spawning and managing tasks within an async runtime.
+# It provides the core functionality needed to convert futures into tasks.
+async-task = { workspace = true }
+# A lightweight implementation of futures.
+futures-lite = { workspace = true }
+# A multi-producer, multi-consumer channel that we'll use to implement our async queue,
+# allowing tasks to be safety passed around within the runtime
+flume = { workspace = true }

@@ -1,3 +1,13 @@
 [workspace]
-members = ["ch01-introduction-to-async", "ch02-basic-async-rust"]
+members = ["ch01-introduction-to-async", "ch02-basic-async-rust", "ch03-building-our-own-async-queues"]
 resolver = "2"
+
+[workspace.dependencies]
+reqwest = { version = "0.12.8", features = ["json"] }
+serde = { version = "1.0.214", features = ["derive"] }
+serde_json = "1.0.132"
+futures-util = "0.3.31"
+tokio = { version = "1.41.0", features = ["full"] }
+async-task = "4.7.1"
+futures-lite = "2.5.0"
+flume = "0.11.1"
