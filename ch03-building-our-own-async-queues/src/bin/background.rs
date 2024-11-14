@@ -239,7 +239,7 @@ impl Future for BackgroundProcess {
 
 fn main() {
     Runtime::new().with_high_num(4).with_low_num(2).run();
-    let _background = spawn_task!(BackgroundProcess {});
+    let _background = spawn_task!(BackgroundProcess {}).detach();
 
     let high = CounterFuture { count: 0  };
     let low = CounterFuture { count: 0 };
