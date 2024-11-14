@@ -13,6 +13,27 @@ use hyper_util::rt::TokioExecutor;
 use http_body_util::Full;
 use smol::{future, Task};
 
+macro_rules! spawn_task {
+    ($future:expr) => {
+        spawn_task!($future, FutureType::Low)
+    };
+    ($future:expr, $order:expr) => {
+        spawn_task($future, $order)
+    };
+}
+
+macro_rules! join {
+    ($($future:expr),*) => {
+        {
+            let mut results = Vec::new();
+            $(
+                results.push(future::block_on($future));
+            )*
+            results
+        }
+    };
+}
+
 #[derive(Debug, Clone, Copy)]
 enum FutureType {
     High,
@@ -21,6 +42,39 @@ enum FutureType {
 
 trait FutureOrderLabel: Future {
     fn get_order(&self) -> FutureType;
+}
+
+#[derive(Clone)]
+struct Runtime {
+    high_num: usize,
+    low_num: usize,
+}
+
+impl Runtime {
+    pub fn new() -> Self {
+        let num_cores = std::thread::available_parallelism().unwrap().get();
+        Self {
+            high_num: num_cores -2,
+            low_num: 1,
+        }
+    }
+    pub fn with_high_num(mut self, num: usize) -> Self {
+        self.high_num = num;
+        self
+    }
+    pub fn with_low_num(mut self, num: usize) -> Self {
+        self.low_num = num;
+        self
+    }
+    pub fn run(&self) {
+        std::env::set_var("HIGH_NUM", self.high_num.to_string());
+        std::env::set_var("LOW_NUM", self.low_num.to_string());
+
+        let high = spawn_task!(async {}, FutureType::High);
+        let low = spawn_task!(async {}, FutureType::Low);
+
+        join!(high, low);
+    }
 }
 
 fn spawn_task<F, T>(future: F, order: FutureType) -> Task<T>
@@ -105,14 +159,21 @@ fn spawn_task<F, T>(future: F, order: FutureType) -> Task<T>
     return task;
 }
 
-macro_rules! spawn_task {
-    ($future:expr) => {
-        spawn_task!($future, FutureType::Low)
-    };
-    ($future:expr, $order:expr) => {
-        spawn_task($future, $order)
-    };
+struct CustomExecutor;
+
+impl<F> hyper::rt::Executor<F> for CustomExecutor
+where F: Future + Send + 'static,
+      F::Output: Send + 'static,
+{
+    fn execute(&self, fut: F) {
+        spawn_task!(async {
+            println!("sending request");
+            fut.await;
+        }).detach();
+    }
 }
+
+
 
 fn main() -> anyhow::Result<()> {
     let url = "http://www.raku.org";
@@ -125,11 +186,8 @@ fn main() -> anyhow::Result<()> {
         .header("Accept", "text/html")
         .body(Full::new(Bytes::from("Rakudo Star")))?;
 
-
-    println!("{:?}", request);
-
     let future = async {
-        let client = Client::builder(TokioExecutor::new())
+        let client = Client::builder(Runtime::new())
             .build_http();
         client.request(request).await.unwrap()
     };
