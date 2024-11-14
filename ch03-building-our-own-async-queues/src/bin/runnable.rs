@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use std::sync::LazyLock;
 use async_task::{Runnable, Task};
 use futures_lite::future;
+use flume::{Sender, Receiver};
 
 #[derive(Debug, Clone, Copy)]
 enum FutureType {
@@ -88,6 +89,14 @@ fn spawn_task<F, T>(future: F) -> Task<T>
         F: Future<Output = T> + Send + 'static + FutureOrderLabel,
         T: Send + 'static,
 {
+    static HIGH_CHANNEL: LazyLock<(Sender<Runnable>, Receiver<Runnable>)> = LazyLock::new(|| {
+       flume::unbounded::<Runnable>()
+    });
+
+    static LOW_CHANNEL: LazyLock<(Sender<Runnable>, Receiver<Runnable>)> = LazyLock::new(|| {
+        flume::unbounded::<Runnable>()
+    });
+
     // With the static we are ensuring our queue is living throughout the lifetime of the program.
     // This make sense as we will want to send tasks to our queue throughout the lifetime of the program.
     // The LazyLock struct gets initialised on the first access of the struct. Once the struct is initialised,
@@ -100,37 +109,65 @@ fn spawn_task<F, T>(future: F) -> Task<T>
     // again when the waker wakes the task in turn scheduling the task again. If we do not pass the waker into our future,
     // it would not be polled again. This is because the future cannot be woken to be polled again.
     static HIGH_QUEUE: LazyLock<flume::Sender<Runnable>> = LazyLock::new(|| {
-        // We need to create our channel, and create a mechanism foe receiving futures send to that channel
-        let (tx, rx) = flume::unbounded::<Runnable>();
-
-        for _ in 0..20 {
-            let receiver = rx.clone();
+        for _ in 0..2 {
+            let high_receiver = HIGH_CHANNEL.1.clone();
+            let low_receiver = LOW_CHANNEL.1.clone();
             thread::spawn(move || {
-                while let Ok(runnable) = receiver.recv() {
-                    // We use the `catch_unwind` function because we do not know the quality of the code
-                    // being passed to our async runtime. The `catch_unwind` function catches the error if it is thrown whilst
-                    //the code is returnning a `Ok` or `Err`.
-                    let _ = catch_unwind(|| runnable.run());
+                loop {
+                    match high_receiver.try_recv() {
+                        Ok(runnable) => {
+                            // We use the `catch_unwind` function because we do not know the quality of the code
+                            // being passed to our async runtime. The `catch_unwind` function catches the error if it is thrown whilst
+                            //the code is returnning a `Ok` or `Err`.
+                            let _ = catch_unwind(|| runnable.run());
+                        },
+                        Err(_) => {
+                            match low_receiver.try_recv() {
+                                Ok(runnable) => {
+                                    let _ = catch_unwind(|| runnable.run());
+                                },
+                                Err(_) => {
+                                    thread::sleep(Duration::from_millis(100));
+                                }
+                            }
+                        }
+                    }
                 }
             });
         }
 
         // We return the transmitter channel so that we can send runnables to our thread.
-        tx
+        HIGH_CHANNEL.0.clone()
     });
 
     static LOW_QUEUE: LazyLock<flume::Sender<Runnable>> = LazyLock::new(|| {
-        let (tx, rx) = flume::unbounded::<Runnable>();
-
-        for _ in 0..10 {
-            let receiver = rx.clone();
+        for _ in 0..1 {
+            let high_receiver = HIGH_CHANNEL.1.clone();
+            let low_receiver = LOW_CHANNEL.1.clone();
             thread::spawn(move || {
-                while let Ok(runnable) = receiver.recv() {
-                    let _ = catch_unwind(|| runnable.run());
+                loop {
+                    match high_receiver.try_recv() {
+                        Ok(runnable) => {
+                            // We use the `catch_unwind` function because we do not know the quality of the code
+                            // being passed to our async runtime. The `catch_unwind` function catches the error if it is thrown whilst
+                            //the code is returnning a `Ok` or `Err`.
+                            let _ = catch_unwind(|| runnable.run());
+                        },
+                        Err(_) => {
+                            match low_receiver.try_recv() {
+                                Ok(runnable) => {
+                                    let _ = catch_unwind(|| runnable.run());
+                                },
+                                Err(_) => {
+                                    thread::sleep(Duration::from_millis(100));
+                                }
+                            }
+                        }
+                    }
                 }
             });
         }
-        tx
+        LOW_CHANNEL.0.clone()
     });
 
     // We have created a closure that accepts a runnable and sends it to our queue.
@@ -157,22 +194,10 @@ fn spawn_task<F, T>(future: F) -> Task<T>
 }
 
 fn main() {
-    let one = CounterFuture { count: 0, order: FutureType::High };
-    let two = CounterFuture { count: 0, order: FutureType::Low };
-    let t_one = spawn_task(one);
-    let t_two = spawn_task(two);
-    future::block_on(t_one);
-    future::block_on(t_two);
-    // let t_two = spawn_task(two);
-    // let t_three = spawn_task(async {
-    //     async_fn().await;
-    //     async_fn().await;
-    //     async_fn().await;
-    //     async_fn().await;
-    // });
-    // std::thread::sleep(Duration::from_secs(5));
-    // println!("Before the block");
-    // future::block_on(t_one);
-    // future::block_on(t_two);
-    // future::block_on(t_three);
+    let high = CounterFuture { count: 0, order: FutureType::High };
+    let low = CounterFuture { count: 0, order: FutureType::Low };
+    let t_high = spawn_task(high);
+    let t_low = spawn_task(low);
+    future::block_on(t_high);
+    future::block_on(t_low);
 }
