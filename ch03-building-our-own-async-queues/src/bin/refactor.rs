@@ -162,6 +162,31 @@ macro_rules! spawn_task {
     };
 }
 
+macro_rules! join {
+    ($($future:expr),*) => {
+        {
+            let mut results = Vec::new();
+            $(
+                results.push(future::block_on($future));
+            )*
+            results
+        }
+    };
+}
+
+macro_rules! try_join {
+    ($($future:expr),*) => {
+        {
+            let mut result = Vec::new();
+            $(
+                let result = catch_unwind(|| future::block_on($future));
+                results.push(result);
+            )*
+            results
+        }
+    };
+}
+
 fn main() {
     let high = CounterFuture { count: 0  };
     let low = CounterFuture { count: 0 };
@@ -172,8 +197,6 @@ fn main() {
         async_fn().await;
         async_fn().await;
     });
-    future::block_on(t_high);
-    future::block_on(t_low);
-    future::block_on(t_async_fn);
-    future::block_on(t_async_await);
+    join!(t_high, t_low);
+    join!(t_async_fn, t_async_await);
 }
