@@ -6,8 +6,25 @@ use std::sync::LazyLock;
 use async_task::{Runnable, Task};
 use futures_lite::future;
 
+#[derive(Debug, Clone, Copy)]
+enum FutureType {
+    High,
+    Low,
+}
+
+trait FutureOrderLabel: Future {
+    fn get_order(&self) -> FutureType;
+}
+
 struct CounterFuture {
     count: u32,
+    order: FutureType,
+}
+
+impl FutureOrderLabel for CounterFuture {
+    fn get_order(&self) -> FutureType {
+        self.order
+    }
 }
 
 impl Future for CounterFuture {
@@ -68,7 +85,7 @@ impl Future for AsyncSleep {
 // As we cannot guarantee when a task is finished, we must ensure that the lifetime of our task is static.
 fn spawn_task<F, T>(future: F) -> Task<T>
     where
-        F: Future<Output = T> + Send + 'static,
+        F: Future<Output = T> + Send + 'static + FutureOrderLabel,
         T: Send + 'static,
 {
     // With the static we are ensuring our queue is living throughout the lifetime of the program.
@@ -82,25 +99,49 @@ fn spawn_task<F, T>(future: F) -> Task<T>
     // the run function that polls the task's future once. Then the runnable is dropped. The runnable only appears
     // again when the waker wakes the task in turn scheduling the task again. If we do not pass the waker into our future,
     // it would not be polled again. This is because the future cannot be woken to be polled again.
-    static QUEUE: LazyLock<flume::Sender<Runnable>> = LazyLock::new(|| {
+    static HIGH_QUEUE: LazyLock<flume::Sender<Runnable>> = LazyLock::new(|| {
         // We need to create our channel, and create a mechanism foe receiving futures send to that channel
         let (tx, rx) = flume::unbounded::<Runnable>();
 
-        thread::spawn(move || {
-            while let Ok(runnable) = rx.recv() {
-                println!("runnable received");
-                // We use the `catch_unwind` function because we do not know the quality of the code
-                // being passed to our async runtime. The `catch_unwind` function catches the error if it is thrown whilst
-                //the code is returnning a `Ok` or `Err`.
-                let _ = catch_unwind(|| runnable.run());
-            }
-        });
+        for _ in 0..20 {
+            let receiver = rx.clone();
+            thread::spawn(move || {
+                while let Ok(runnable) = receiver.recv() {
+                    // We use the `catch_unwind` function because we do not know the quality of the code
+                    // being passed to our async runtime. The `catch_unwind` function catches the error if it is thrown whilst
+                    //the code is returnning a `Ok` or `Err`.
+                    let _ = catch_unwind(|| runnable.run());
+                }
+            });
+        }
+
         // We return the transmitter channel so that we can send runnables to our thread.
         tx
     });
 
+    static LOW_QUEUE: LazyLock<flume::Sender<Runnable>> = LazyLock::new(|| {
+        let (tx, rx) = flume::unbounded::<Runnable>();
+
+        for _ in 0..10 {
+            let receiver = rx.clone();
+            thread::spawn(move || {
+                while let Ok(runnable) = receiver.recv() {
+                    let _ = catch_unwind(|| runnable.run());
+                }
+            });
+        }
+        tx
+    });
+
     // We have created a closure that accepts a runnable and sends it to our queue.
-    let schedule = |runnable| QUEUE.send(runnable).unwrap();
+    let schedule_high = |runnable| HIGH_QUEUE.send(runnable).unwrap();
+    let schedule_low = |runnable| LOW_QUEUE.send(runnable).unwrap();
+
+    let schedule = match future.get_order() {
+        FutureType::High => schedule_high,
+        FutureType::Low => schedule_low,
+    };
+
     // We then create the runnable and task by using the `async_task` spawn function.
     // `async_task` spawn function leads to an unsafe function that allocates the future onto the heap.
     // The task and runnable returned from the spawn function essentially have a pointer to the same future.
@@ -111,24 +152,27 @@ fn spawn_task<F, T>(future: F) -> Task<T>
     // block the main thread to wait on the task being executed because there is no runnable on the queue, but we still
     // return the task. Remember the task and the runnable have pointers to the same future.
     runnable.schedule();
-    println!("Here is the queue count: {:?}", QUEUE.len());
+    println!("High queue count: {:?},low queue count: {:?}", HIGH_QUEUE.len(), LOW_QUEUE.len());
     return task;
 }
 
 fn main() {
-    let one = CounterFuture { count: 0 };
-    let two = CounterFuture { count: 0 };
+    let one = CounterFuture { count: 0, order: FutureType::High };
+    let two = CounterFuture { count: 0, order: FutureType::Low };
     let t_one = spawn_task(one);
     let t_two = spawn_task(two);
-    let t_three = spawn_task(async {
-        async_fn().await;
-        async_fn().await;
-        async_fn().await;
-        async_fn().await;
-    });
-    std::thread::sleep(Duration::from_secs(5));
-    println!("Before the block");
     future::block_on(t_one);
     future::block_on(t_two);
-    future::block_on(t_three);
+    // let t_two = spawn_task(two);
+    // let t_three = spawn_task(async {
+    //     async_fn().await;
+    //     async_fn().await;
+    //     async_fn().await;
+    //     async_fn().await;
+    // });
+    // std::thread::sleep(Duration::from_secs(5));
+    // println!("Before the block");
+    // future::block_on(t_one);
+    // future::block_on(t_two);
+    // future::block_on(t_three);
 }
