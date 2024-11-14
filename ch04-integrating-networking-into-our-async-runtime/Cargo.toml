@@ -1,0 +1,18 @@
+[package]
+name = "ch04-integrating-networking-into-our-async-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+smol = { workspace = true }
+async-native-tls = { workspace = true }
+http = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+async-task = { workspace = true }
+futures-lite = { workspace = true }
+flume = { workspace = true }

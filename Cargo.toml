@@ -1,5 +1,5 @@
 [workspace]
-members = ["ch01-introduction-to-async", "ch02-basic-async-rust", "ch03-building-our-own-async-queues"]
+members = ["ch01-introduction-to-async", "ch02-basic-async-rust", "ch03-building-our-own-async-queues", "ch04-integrating-networking-into-our-async-runtime"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -11,3 +11,11 @@ tokio = { version = "1.41.0", features = ["full"] }
 async-task = "4.7.1"
 futures-lite = "2.5.0"
 flume = "0.11.1"
+hyper = { version =  "1.5.0", features = ["http1", "http2", "client"] }
+hyper-util = "0.1.10"
+smol = "1.3.0"
+async-native-tls = "0.5.0"
+http = "1.1.0"
+anyhow = "1.0.93"
+http-body-util = "0.1.2"
+bytes = "1.8.0"
